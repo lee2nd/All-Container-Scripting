@@ -2,10 +2,11 @@ import zeep
 import pandas as pd
 import base64
 import schedule
-import paramiko
 from datetime import date, timedelta, datetime
 import time
 from pymongo import MongoClient 
+import os
+import logging
 
 class auto_mail():
     def __init__(self):
@@ -24,10 +25,23 @@ class auto_mail():
 
     def sendReport(self, filepath, df_summary_sheet, duration, d_start, d_end):
 
-        filename = filepath.split("/")[-1]
-        with open(filepath, "rb") as f:
+        attachfilename = ""
+
+        filename = excelpath.split("/")[-1]
+        with open(excelpath, "rb") as f:
             encoded_string = base64.b64encode(f.read())
             encoded_execl_file = encoded_string.decode('utf-8')
+
+        attachfilename = filename + ':' + str(encoded_execl_file)
+
+        for chip in chip_list:
+            try:
+                with open(f"./defect_map/{chip} defect map.html", "rb") as f:
+                    encoded_string = base64.b64encode(f.read())
+                    encoded_execl_file = encoded_string.decode('utf-8')
+                attachfilename = attachfilename + ";" + chip + " defect map.html:" + str(encoded_execl_file)
+            except:
+                continue
 
         summary_sheet_html_table = df_summary_sheet.to_html(index=False)
         
@@ -50,8 +64,7 @@ class auto_mail():
                 '<br><br><font face="times new roman">' +
                 summary_sheet_html_table + 
                 '', 
-                'strFileBase64String': filename + ':' + str(encoded_execl_file) + 
-                ''
+                'strFileBase64String': attachfilename
         }
         response_01 = self.client.service.ManualSend_39(**ManualSend_01)
             
@@ -75,31 +88,38 @@ def job(duration):
 
     # AT2MT_SUMMARY
     collection = db["AT2MT_SUMMARY"] 
-    cursor = collection.find({"MT_time": {'$gt':d_start,'$lt':d_end}})
+    cursor = collection.find({"MT_time": {'$gt':str(d_start),'$lt':str(d_end)}})
     compare_df = pd.DataFrame.from_records(cursor)
-        
+
+    chip_list = list(set(list(compare_df.sheet_id)))
+    logging.warning(chip_list)
+
     # Create a Pandas Excel writer using XlsxWriter as the engine.
     writer = pd.ExcelWriter(f'./output/compare({duration}).xlsx', engine='xlsxwriter')
     
-    # delete the index name
-    match_df = match_df.iloc[:,1:]
-    compare_df = compare_df.iloc[:,2:]
-    
-    # sort the df by MT time
-    match_df = match_df.sort_values('MT_time')
-    compare_df = compare_df.sort_values('MT_time')
-    
-    # Write each dataframe to a different worksheet.
-    compare_df.to_excel(writer, sheet_name='summary by sheet', index=False)
-    match_df.to_excel(writer, sheet_name='raw', index=False)
+    if len(match_df) > 0:
+        # delete the index name
+        match_df = match_df.iloc[:,1:]
+        compare_df = compare_df.iloc[:,2:]
+        
+        # sort the df by MT time
+        match_df = match_df.sort_values('MT_time')
+        compare_df = compare_df.sort_values('MT_time')
+        
+        # Write each dataframe to a different worksheet.
+        compare_df.to_excel(writer, sheet_name='summary by sheet', index=False)
+        match_df.to_excel(writer, sheet_name='raw', index=False)
 
-    # Close the Pandas Excel writer and output the Excel file.
-    writer.close()    
-    
-    time.sleep(1)        
-    
-    obj = auto_mail()
-    obj.sendReport(filepath=f"./output/compare({duration}).xlsx", df_summary_sheet=compare_df, duration=duration, d_start=str(d_start), d_end=str(d_end))
+        # Close the Pandas Excel writer and output the Excel file.
+        writer.close()    
+
+        time.sleep(1)    
+        obj = auto_mail()
+        obj.sendReport(excelpath=f"./output/compare({duration}).xlsx", chip_list=chip_list, df_summary_sheet=compare_df, duration=duration, d_start=str(d_start), d_end=str(d_end))
+            
+    else:
+        logging.warning("no data")
+
     
 if __name__ == '__main__':
     
